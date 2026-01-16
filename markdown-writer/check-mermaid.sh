@@ -39,10 +39,10 @@ while IFS= read -r line || [ -n "$line" ]; do
     if [[ "$line" =~ ^\`\`\`$ ]] && [ $IN_MERMAID -eq 1 ]; then
         # 执行检查
 
-        # 检查 1: style 样式（致命错误）
-        if echo "$CONTENT" | grep -q 'style.*fill:'; then
-            echo -e "${RED}  ✗ 致命错误：包含禁止的 style 样式${NC}"
-            echo "$CONTENT" | grep 'style.*fill:' | while IFS= read -r style_line; do
+        # 检查 1: style 样式（致命错误 - 检测所有style属性）
+        if echo "$CONTENT" | grep -qE '^\s*style\s+'; then
+            echo -e "${RED}  ✗ 致命错误：包含禁止的 style 样式（任何style属性都不允许）${NC}"
+            echo "$CONTENT" | grep -E '^\s*style\s+' | while IFS= read -r style_line; do
                 echo -e "${RED}    $style_line${NC}"
             done
             ERRORS=$((ERRORS + 1))
