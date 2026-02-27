@@ -1,0 +1,205 @@
+{
+  "_meta": {
+    "version": "1.1",
+    "last_updated": "2026-02-27",
+    "description": "Feed 数据源模式注册表 — 从 331 个已测试源中提炼的 URL/CMS/反爬模式",
+    "update_rule": "每次成功接入新源后由 Phase 5 自更新指令触发追加"
+  },
+
+  "cms_rss_paths": {
+    "WordPress": ["/feed", "/feed/", "/wp-rss2.php", "/comments/feed/"],
+    "Arc XP": ["/arcio/rss/", "/arc/outboundfeeds/rss/"],
+    "Drupal": ["/rss.xml", "/feed", "/node/feed"],
+    "Ghost": ["/rss/", "/rss"],
+    "Hugo": ["/index.xml", "/feed.xml"],
+    "Jekyll": ["/feed.xml", "/atom.xml"],
+    "Blogger": ["/feeds/posts/default", "/feeds/posts/default?alt=rss"],
+    "Squarespace": ["/blog?format=rss"],
+    "Webflow": ["/blog-rss.xml"],
+    "Sitefinity": ["/feed"]
+  },
+
+  "extended_rss_paths": [
+    "/feed", "/rss", "/rss.xml", "/atom.xml", "/feed.xml",
+    "/index.xml", "/rss/v2.xml", "/feeds/posts/default",
+    "/news/rss", "/rss/news", "/feed/",
+    "/blog/feed", "/blog/rss", "/rss/all",
+    "/feed/all/", "/feeds/all.atom",
+    "/arcio/rss/", "/arc/outboundfeeds/rss/",
+    "/news/feed", "/news.rss", "/news/rss.xml",
+    "/api/rss", "/api/feed", "/rssFeed",
+    "/en/rss", "/en/feed", "/world/rss",
+    "/.rss/full/", "/rss/current.xml",
+    "/feeds/feedburner", "/feeds/main"
+  ],
+
+  "rss_subdomain_patterns": [
+    "feeds.{domain}",
+    "rss.{domain}",
+    "xml.{domain}",
+    "xml2.{domain}"
+  ],
+
+  "api_providers": {
+    "sec.gov": {
+      "provider": "SEC",
+      "auth": "none",
+      "ua_required": true,
+      "endpoints": [
+        "/cgi-bin/browse-edgar?action=getcurrent&output=atom",
+        "/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type={type}&output=atom",
+        "/api/xbrl/companyfacts/CIK{cik}.json"
+      ]
+    },
+    "eodhd.com": {
+      "provider": "EODHD",
+      "auth": "api_key",
+      "key_param": "api_token",
+      "endpoints": ["/api/news", "/api/fundamentals/{ticker}", "/api/esg/{ticker}"]
+    },
+    "polygon.io": {
+      "provider": "Polygon",
+      "auth": "api_key",
+      "key_param": "apiKey",
+      "endpoints": ["/v3/reference/dividends", "/v3/reference/splits", "/v1/reference/sec/filings"]
+    },
+    "alphavantage.co": {
+      "provider": "Alpha Vantage",
+      "auth": "api_key",
+      "key_param": "apikey",
+      "endpoints": ["/query?function=EARNINGS_CALENDAR"]
+    },
+    "tradingeconomics.com": {
+      "provider": "TradingEconomics",
+      "auth": "basic",
+      "credentials": "guest:guest",
+      "endpoints": ["/feeds/view/"]
+    },
+    "finnhub.io": {
+      "provider": "Finnhub",
+      "auth": "api_key",
+      "key_param": "token",
+      "endpoints": ["/api/v1/calendar/earnings", "/api/v1/calendar/ipo"]
+    },
+    "api.worldbank.org": {
+      "provider": "World Bank",
+      "auth": "none",
+      "endpoints": ["/v2/country/all/indicator/{indicator}?format=json"]
+    },
+    "sdmx.oecd.org": {
+      "provider": "OECD",
+      "auth": "none",
+      "endpoints": ["/public/rest/data/{dataset}"]
+    },
+    "api.bls.gov": {
+      "provider": "BLS",
+      "auth": "none",
+      "endpoints": ["/publicAPI/v2/timeseries/data/"]
+    },
+    "api.fda.gov": {
+      "provider": "openFDA",
+      "auth": "none",
+      "endpoints": ["/drug/event.json", "/drug/enforcement.json"]
+    },
+    "federalregister.gov": {
+      "provider": "Federal Register",
+      "auth": "none",
+      "endpoints": ["/api/v1/documents.json"]
+    },
+    "cls.cn": {
+      "provider": "CLS",
+      "auth": "headers",
+      "required_headers": {"Referer": "https://www.cls.cn/", "User-Agent": "Mozilla/5.0"},
+      "endpoints": ["/api/telegraph/list"]
+    }
+  },
+
+  "anti_crawl_solutions": {
+    "Cloudflare": {
+      "level": "L3",
+      "method": "playwright",
+      "proxy": true,
+      "bypass_rate": "low",
+      "note": "通常优先用 RSS 绕过；无 RSS 则 playwright+代理"
+    },
+    "DataDome": {
+      "level": "L4",
+      "method": "playwright",
+      "proxy": true,
+      "bypass_rate": "very_low",
+      "note": "几乎无法绕过，优先寻找替代源（RSS/API）"
+    },
+    "Akamai": {
+      "level": "L3",
+      "method": "playwright",
+      "proxy": true,
+      "bypass_rate": "low",
+      "note": "政府站点 Akamai 通常不拦截（如 CFTC/FINRA）"
+    },
+    "PerimeterX": {
+      "level": "L4",
+      "method": "playwright",
+      "proxy": true,
+      "bypass_rate": "very_low",
+      "note": "JS 指纹检测，几乎无法绕过"
+    },
+    "Incapsula": {
+      "level": "L3",
+      "method": "playwright",
+      "proxy": true,
+      "bypass_rate": "low",
+      "note": "Imperva WAF，类似 Akamai"
+    }
+  },
+
+  "content_selectors": {
+    "WordPress": [".entry-content", ".post-content", ".article-content", "article .content"],
+    "Drupal": [".field--name-body", ".node__content", ".press-release"],
+    "Arc XP": [".article-detail-body", ".article-body-text"],
+    "Next.js": ["__NEXT_DATA__ (JSON parse)"],
+    "China_gov": ["#zoom", "#UCAP-CONTENT", ".article_con"],
+    "US_gov": [".press-release", ".govspeak", ".field-item"],
+    "generic": [".article-body", ".story-body", ".post-body", "article"]
+  },
+
+  "syndication_endpoints": {
+    "twitter": {
+      "url_template": "https://syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}",
+      "auth": "none",
+      "format": "Next.js SSR HTML + __NEXT_DATA__ JSON",
+      "json_path": "__NEXT_DATA__.props.pageProps.timeline.entries",
+      "scope": "subscription",
+      "note": "20条/请求（中量账号最新时序）；高量账号返回热门排序；含full_text+created_at+retweet_count+favorite_count"
+    },
+    "youtube": {
+      "url_template": "https://www.youtube.com/feeds/videos.xml?user={username}",
+      "auth": "none",
+      "format": "Atom XML",
+      "scope": "subscription",
+      "note": "Atom格式；media:description含完整视频描述"
+    }
+  },
+
+  "third_party_mirrors": {
+    "truthsocial": {
+      "mirror_domain": "trumpstruth.org",
+      "url": "https://www.trumpstruth.org/feed",
+      "format": "RSS 2.0",
+      "auth": "none",
+      "freshness": "daily",
+      "note": "100条/请求覆盖~7天；title+description含完整帖子正文；特朗普Truth Social专用"
+    }
+  },
+
+  "domain_shortcuts": {
+    "bbc": {"domain": "bbc.co.uk", "rss": "feeds.bbci.co.uk/news/rss.xml"},
+    "reuters": {"domain": "reuters.com", "rss": null, "note": "DataDome 封锁，建议用 RSS 第三方"},
+    "nytimes": {"domain": "nytimes.com", "rss": "rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"},
+    "guardian": {"domain": "theguardian.com", "rss": "theguardian.com/world/rss"},
+    "wsj": {"domain": "wsj.com", "rss": null, "note": "DataDome + OAuth2 ROPC，需付费凭据"},
+    "ft": {"domain": "ft.com", "rss": null, "note": "硬付费墙"},
+    "bloomberg": {"domain": "bloomberg.com", "rss": null, "note": "JS 渲染 + 付费墙"},
+    "twitter": {"domain": "twitter.com", "rss": null, "syndication": "syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}", "note": "官方API需开发者认证；Syndication端点免费可达"},
+    "truthsocial": {"domain": "truthsocial.com", "rss": "www.trumpstruth.org/feed", "note": "官方Mastodon API被Cloudflare封锁；第三方RSS镜像trumpstruth.org"}
+  }
+}
