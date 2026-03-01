@@ -61,6 +61,10 @@ FULL_CONTENT_CHARS = 500        # content:encoded "全文" 判断阈值
 RSS_DESCRIPTION_MIN = 50        # description "有摘要" 判断阈值
 API_CONTENT_MIN_FIELDS = 3      # API 无正文字段时最低字段数
 GRADE_THRESHOLDS = (0.85, 0.55, 0.25)  # A/B/C 质量评分边界
+WEB_DETAIL_PROBE_LIMIT = 5      # discover 阶段最多探测的文章详情页数量
+FEED_ENRICH_SAMPLE_COUNT = 5    # feed_enrich 验证时从 RSS 抽取的 link 数量
+FEED_ENRICH_MIN_CHARS = 500     # feed_enrich 验证时 WEB 正文最低字符数
+FEED_ENRICH_PASS_RATIO = 0.6   # feed_enrich 验证通过率阈值（≥60% link 可达）
 
 # ── SPA 检测阈值 ──
 SPA_SIZE_NOSCRIPT = 5000        # <noscript> 存在时的 SPA 判定上限
@@ -387,6 +391,153 @@ def count_article_links(body_text: str, base_url: str) -> int:
                     count += 1
                     break
     return count
+
+
+def extract_article_links(body_text: str, base_url: str, limit: int = WEB_DETAIL_PROBE_LIMIT) -> list[str]:
+    """提取同域文章详情页链接，优先用于 discover 的 WEB 正文探测。"""
+    domain = urlparse(base_url).netloc
+    hrefs = re.findall(r'<a[^>]+href="([^"]+)"', body_text, re.IGNORECASE)
+    article_patterns = [
+        r'/article/', r'/news/', r'/story/', r'/post/', r'/\d{4}/\d{2}/',
+        r'/a/', r'/p/', r'\.html$', r'\.shtml$',
+    ]
+    deny_patterns = [
+        r'/tag/', r'/topic/', r'/category/', r'/section/', r'/video/',
+        r'/opinion/', r'/about', r'/contact', r'/search',
+    ]
+
+    picked: list[str] = []
+    seen: set[str] = set()
+    for href in hrefs:
+        href = href.strip()
+        if not href or href.startswith("#") or href.startswith("javascript:"):
+            continue
+        if href.startswith("//"):
+            href = f"{urlparse(base_url).scheme}:{href}"
+        elif href.startswith("/"):
+            href = f"{urlparse(base_url).scheme}://{domain}{href}"
+        elif not href.startswith("http"):
+            href = base_url.rstrip("/") + "/" + href.lstrip("/")
+
+        parsed = urlparse(href)
+        if parsed.netloc != domain:
+            continue
+        if any(re.search(pat, parsed.path, re.IGNORECASE) for pat in deny_patterns):
+            continue
+        if not any(re.search(pat, parsed.path, re.IGNORECASE) for pat in article_patterns):
+            continue
+        clean = href.split("#", 1)[0]
+        if clean in seen:
+            continue
+        seen.add(clean)
+        picked.append(clean)
+        if len(picked) >= limit:
+            break
+    return picked
+
+
+def extract_rss_item_links(
+    items: list[ElementTree.Element],
+    limit: int = FEED_ENRICH_SAMPLE_COUNT,
+) -> list[str]:
+    """从 RSS/Atom items 中提取 <link> URL，用于 feed_enrich 验证。
+
+    均匀抽样：当 items 数量 > limit 时，按等间距抽取而非仅取前 N 条，
+    避免因时间集中导致偏差。
+    """
+    ns_atom = "http://www.w3.org/2005/Atom"
+
+    # 按等间距抽样
+    total = len(items)
+    if total <= limit:
+        sample = items
+    else:
+        step = total / limit
+        sample = [items[int(i * step)] for i in range(limit)]
+
+    links: list[str] = []
+    seen: set[str] = set()
+    for item in sample:
+        link_url = None
+        # RSS 2.0: <link>text</link>
+        link_el = item.find("link")
+        if link_el is not None and link_el.text:
+            link_url = link_el.text.strip()
+        # Atom: <link href="..." />
+        if not link_url:
+            atom_link = item.find(f"{{{ns_atom}}}link")
+            if atom_link is not None:
+                link_url = atom_link.get("href", "").strip()
+        if link_url and link_url.startswith("http") and link_url not in seen:
+            seen.add(link_url)
+            links.append(link_url)
+    return links
+
+
+def validate_feed_enrich(
+    item_links: list[str],
+    output_dir: str = "/tmp",
+) -> dict:
+    """验证 RSS feed_enrich 可行性：逐一 WEB 探测 item link，统计正文可达率。
+
+    Returns:
+        {
+            "verified": bool,           # ≥60% link 正文可达
+            "total": int,               # 测试的 link 总数
+            "passed": int,              # 正文可达的 link 数
+            "pass_ratio": float,        # 通过率
+            "best_selector": str|None,  # 出现频率最高的 content_selector
+            "needs_playwright": bool,   # 是否需要 playwright
+            "results": [...]            # 每条 link 的探测摘要
+        }
+    """
+    results: list[dict] = []
+    selector_counts: dict[str, int] = {}
+    passed_count = 0
+    needs_playwright = False
+
+    for link in item_links:
+        _log("STEP", f"feed_enrich 验证: {link}")
+        wr = probe_web(link, output_dir=output_dir)
+        summary = {
+            "url": link,
+            "http_code": wr.get("http_code", 0),
+            "success": wr.get("success", False),
+            "char_count": wr.get("details", {}).get("char_count", 0),
+            "selector": wr.get("details", {}).get("matched_selector"),
+            "diagnosis": wr.get("diagnosis", ""),
+        }
+
+        if summary["success"] and summary["char_count"] >= FEED_ENRICH_MIN_CHARS:
+            passed_count += 1
+            sel = summary["selector"]
+            if sel:
+                selector_counts[sel] = selector_counts.get(sel, 0) + 1
+        elif not summary["success"]:
+            diag = summary["diagnosis"]
+            if "JS challenge" in diag or "SPA" in diag:
+                needs_playwright = True
+
+        results.append(summary)
+        time.sleep(0.5)  # 礼貌间隔
+
+    total = len(item_links)
+    pass_ratio = passed_count / total if total > 0 else 0.0
+    best_selector = max(selector_counts, key=selector_counts.get) if selector_counts else None
+
+    verified = pass_ratio >= FEED_ENRICH_PASS_RATIO
+    status = "OK" if verified else "FAIL"
+    _log(status, f"feed_enrich 验证: {passed_count}/{total} 可达 (ratio={pass_ratio:.0%}), selector={best_selector}")
+
+    return {
+        "verified": verified,
+        "total": total,
+        "passed": passed_count,
+        "pass_ratio": round(pass_ratio, 2),
+        "best_selector": best_selector,
+        "needs_playwright": needs_playwright,
+        "results": results,
+    }
 
 
 def detect_rss_format(root_tag: str) -> str:
@@ -768,22 +919,37 @@ def evaluate_content_completeness(result: dict, kind: str = "news") -> dict:
 # Section 6: 字段推断
 # ═══════════════════════════════════════════════════════════════
 
-def infer_rss_fields(root: ElementTree.Element, items: list) -> dict:
-    """从 RSS 探测结果推断爬虫配置字段（保守默认：需 web fallback）"""
+def infer_rss_fields(
+    root: ElementTree.Element,
+    items: list,
+    content_source: str = "none",
+) -> dict:
+    """从 RSS 探测结果推断爬虫配置字段。
+
+    content_source 决定 crawl_mode 初始值：
+      - "content_encoded" / "atom_content" → feed_only（RSS 本身含全文）
+      - "description" → feed_enrich（仅摘要，需跟随 link 抓正文）
+        注意：feed_enrich 需通过 validate_feed_enrich() 验证后才可最终确认
+      - "none" → feed_only（保守默认，等待上层判断）
+    """
     root_tag = root.tag.split("}")[-1] if "}" in root.tag else root.tag
     rss_format = detect_rss_format(root_tag)
 
+    has_full = content_source in ("content_encoded", "atom_content")
+    crawl_mode = "feed_only" if has_full else "feed_enrich" if content_source == "description" else "feed_only"
+
     return {
         "crawl_method": "requests",
-        "crawl_mode": "feed_only",
+        "crawl_mode": crawl_mode,
         "crawl_use_proxy": 0,
         "crawl_range": "latest",
         "login_requires": 0,
         "scope": "broadcast",
         "trigger": "scheduled",
         "_rss_format": rss_format,
-        "_has_full_content": False,
-        "_needs_web_fallback": True,
+        "_has_full_content": has_full,
+        "_needs_web_fallback": not has_full,
+        "_feed_enrich_pending": content_source == "description",
     }
 
 
@@ -1044,8 +1210,11 @@ def probe_rss(url: str, output_dir: str = "/tmp") -> dict:
     with open(sample_path, "wb") as f:
         f.write(r.body)
 
-    # 字段推断
-    fields = infer_rss_fields(root, items)
+    # 提取 item link（供 feed_enrich 验证使用）
+    sample_links = extract_rss_item_links(items)
+
+    # 字段推断（传入 content_source 以正确推断 crawl_mode）
+    fields = infer_rss_fields(root, items, content_source=content_source)
 
     result.update(
         success=passed,
@@ -1066,6 +1235,7 @@ def probe_rss(url: str, output_dir: str = "/tmp") -> dict:
             "paragraph_count": paragraph_count,
             "truncation_marker": truncation_marker,
             "item_consistency": item_consistency,
+            "sample_links": sample_links,
         },
         fields=fields,
     )
@@ -1389,6 +1559,7 @@ def discover(url: str, output_dir: str = "/tmp", kind: str = "news") -> dict:
     patterns = load_patterns()
     candidates: list[dict] = []
     cms = None
+    article_links: list[str] = []
 
     _log("STEP", f"开始发现 {domain} 的所有可用端点...")
 
@@ -1403,6 +1574,18 @@ def discover(url: str, output_dir: str = "/tmp", kind: str = "news") -> dict:
         cms = detect_cms(body_text)
         if cms:
             _log("INFO", f"CMS: {cms}")
+        article_links = extract_article_links(body_text, base_url, limit=WEB_DETAIL_PROBE_LIMIT * 3)
+        if article_links:
+            for article_url in article_links:
+                candidates.append({
+                    "url": article_url,
+                    "type": "WEB",
+                    "source": "article_link",
+                    "confidence": "medium",
+                })
+            _log("INFO", f"发现 {len(article_links)} 条文章详情链接")
+        else:
+            _log("WARN", "未从首页提取到文章详情链接")
     else:
         _log("FAIL", f"HTTP {r.status}" + (f" ({r.error_type})" if r.error_type else ""))
 
@@ -1501,7 +1684,7 @@ def discover(url: str, output_dir: str = "/tmp", kind: str = "news") -> dict:
             if pr["success"]:
                 _log("INFO", f"  {pr['note']}")
 
-    # ── 8. 验证 WEB ──
+    # ── 8. 验证 WEB（主页面 + 文章详情页抽样）──
     if r.status == 200:
         _log("STEP", "验证 WEB 主页面...")
         web_r = probe_web(url, None, output_dir)
@@ -1509,6 +1692,17 @@ def discover(url: str, output_dir: str = "/tmp", kind: str = "news") -> dict:
         probe_results.append(web_r)
         s = "OK" if web_r["success"] else "FAIL"
         _log(s, f"WEB -> {web_r.get('note', web_r.get('diagnosis', ''))}")
+
+        detail_cands = [c for c in candidates if c["type"] == "WEB" and c["source"] == "article_link"]
+        if detail_cands:
+            _log("STEP", f"验证 WEB 文章详情页（抽样 {min(len(detail_cands), WEB_DETAIL_PROBE_LIMIT)} 条）...")
+            for cand in detail_cands[:WEB_DETAIL_PROBE_LIMIT]:
+                dpr = probe_web(cand["url"], None, output_dir)
+                dpr["_source"] = "article_link"
+                dpr["_from"] = url
+                probe_results.append(dpr)
+                ds = "OK" if dpr["success"] else "FAIL"
+                _log(ds, f"WEB详情 -> {cand['url']} | {dpr.get('note', dpr.get('diagnosis', ''))}")
 
     # ── 汇总：按 kind 评估正文完整度，完整优先，同等下 API > RSS > WEB ──
     passed = [pr for pr in probe_results if pr.get("success")]
@@ -1523,8 +1717,55 @@ def discover(url: str, output_dir: str = "/tmp", kind: str = "news") -> dict:
             pr["fields"]["_has_full_content"] = True
     full_content = [pr for pr in passed if pr["_has_full_content"]]
 
+    # ── feed_enrich 验证：RSS 仅摘要且无其他 full_content 时自动触发 ──
+    feed_enrich_result: dict | None = None
+    rss_enrich_candidates = [
+        pr for pr in passed
+        if pr["mode"] == "rss"
+        and not pr["_has_full_content"]
+        and pr.get("fields", {}).get("_feed_enrich_pending")
+    ]
+    if rss_enrich_candidates and kind in ("news", "social"):
+        # 选评分最高的 RSS 摘要源进行 feed_enrich 验证
+        best_rss_partial = sorted(
+            rss_enrich_candidates,
+            key=lambda x: x.get("_completeness", {}).get("score", 0.0),
+            reverse=True,
+        )[0]
+        sample_links = best_rss_partial.get("details", {}).get("sample_links", [])
+        if sample_links:
+            _log("STEP", f"触发 feed_enrich 验证（RSS 仅摘要，{len(sample_links)} 条 link）...")
+            feed_enrich_result = validate_feed_enrich(sample_links, output_dir)
+            if feed_enrich_result["verified"]:
+                # 验证通过：将该 RSS 标记为 full_content
+                best_rss_partial["_has_full_content"] = True
+                best_rss_partial["_feed_enrich_verified"] = True
+                if best_rss_partial.get("fields"):
+                    best_rss_partial["fields"]["_needs_web_fallback"] = False
+                    best_rss_partial["fields"]["_has_full_content"] = True
+                    best_rss_partial["fields"]["_feed_enrich_pending"] = False
+                    if feed_enrich_result["best_selector"]:
+                        best_rss_partial["fields"]["crawl_content_selector"] = feed_enrich_result["best_selector"]
+                    if feed_enrich_result["needs_playwright"]:
+                        best_rss_partial["fields"]["crawl_method"] = "playwright"
+                # 更新 note
+                sel = feed_enrich_result["best_selector"] or "readability"
+                ratio_str = f"{feed_enrich_result['passed']}/{feed_enrich_result['total']}"
+                old_note = best_rss_partial.get("note", "")
+                best_rss_partial["note"] = f"{old_note}；跟随link正文可达({ratio_str})；selector={sel}"
+                full_content = [pr for pr in passed if pr["_has_full_content"]]
+            else:
+                _log("WARN", "feed_enrich 验证失败，RSS 保持 partial_content")
+
     def _sort_key(x: dict) -> tuple:
-        return (TYPE_PRIORITY.get(x["mode"], 99), GRADE_ORDER.get(x["grade"], 99))
+        source_rank = 0 if x.get("_source") == "article_link" else 1
+        score = x.get("_completeness", {}).get("score", 0.0)
+        return (
+            TYPE_PRIORITY.get(x["mode"], 99),
+            GRADE_ORDER.get(x["grade"], 99),
+            -score,
+            source_rank,
+        )
 
     if full_content:
         # 有正文完整的候选：按 type 优先级 + grade 排序
@@ -1541,7 +1782,8 @@ def discover(url: str, output_dir: str = "/tmp", kind: str = "news") -> dict:
     _log("STEP", "=" * 50)
     _log("INFO", f"kind={kind}, 候选: {len(candidates)}, 通过: {len(passed)}, 正文完整: {len(full_content)}")
     if best and content_status == "full_content":
-        _log("OK", f"推荐: {best['mode'].upper()} -> {best['url']} ({best['grade']}级, {kind}完整)")
+        enrich_tag = " (feed_enrich)" if best.get("_feed_enrich_verified") else ""
+        _log("OK", f"推荐: {best['mode'].upper()}{enrich_tag} -> {best['url']} ({best['grade']}级, {kind}完整)")
     elif best:
         _log("WARN", f"最优: {best['mode'].upper()} -> {best['url']} ({best['grade']}级, {kind}不完整)")
     else:
@@ -1561,12 +1803,14 @@ def discover(url: str, output_dir: str = "/tmp", kind: str = "news") -> dict:
         "passed_count": len(passed),
         "full_content_count": len(full_content),
         "content_status": content_status,
+        "feed_enrich_validation": feed_enrich_result,
         "recommended": {
             "type": best["mode"].upper() if best else None,
             "url": best["url"] if best else None,
             "grade": best["grade"] if best else None,
             "note": best.get("note") if best else None,
             "has_full_content": best.get("_has_full_content", False) if best else False,
+            "feed_enrich_verified": best.get("_feed_enrich_verified", False) if best else False,
             "completeness_score": best["_completeness"]["score"] if best and "_completeness" in best else 0.0,
             "completeness_gates": best["_completeness"]["gates"] if best and "_completeness" in best else {},
             "completeness_signals": best["_completeness"]["signals"] if best and "_completeness" in best else {},

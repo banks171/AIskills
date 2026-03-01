@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "version": "1.1",
-    "last_updated": "2026-02-27",
-    "description": "Feed 数据源模式注册表 — 从 331 个已测试源中提炼的 URL/CMS/反爬模式",
+    "version": "1.2",
+    "last_updated": "2026-03-01",
+    "description": "Feed 数据源模式注册表 — 从 346 个已测试源中提炼的 URL/CMS/反爬模式",
     "update_rule": "每次成功接入新源后由 Phase 5 自更新指令触发追加"
   },
 
@@ -30,7 +30,10 @@
     "/api/rss", "/api/feed", "/rssFeed",
     "/en/rss", "/en/feed", "/world/rss",
     "/.rss/full/", "/rss/current.xml",
-    "/feeds/feedburner", "/feeds/main"
+    "/feeds/feedburner", "/feeds/main",
+    "/rss/newsAll", "/en/rss/all.xml",
+    "/rss/rssfeedsfrontpage.aspx", "/rss/news.xml",
+    "/rss/rssfeedsheadlines.aspx"
   ],
 
   "rss_subdomain_patterns": [
@@ -149,6 +152,13 @@
       "proxy": true,
       "bypass_rate": "low",
       "note": "Imperva WAF，类似 Akamai"
+    },
+    "Piano": {
+      "level": "L3",
+      "method": "none",
+      "proxy": false,
+      "bypass_rate": "none",
+      "note": "软付费墙（JS overlay），RSS摘要可达但正文被截断；已知用户：Japan Times、ANSA；无法绕过需付费"
     }
   },
 
@@ -157,6 +167,10 @@
     "Drupal": [".field--name-body", ".node__content", ".press-release"],
     "Arc XP": [".article-detail-body", ".article-body-text"],
     "Next.js": ["__NEXT_DATA__ (JSON parse)"],
+    "BBC": ["[data-component=\"text-block\"]"],
+    "ASP.NET": [".article-paragraph-wrap", ".article-body-paragraph"],
+    "Korea_media": ["<article> tag", ".article_view"],
+    "Antara_CMS": [".post-content (div直接文本，无<p>标签)"],
     "China_gov": ["#zoom", "#UCAP-CONTENT", ".article_con"],
     "US_gov": [".press-release", ".govspeak", ".field-item"],
     "generic": [".article-body", ".story-body", ".post-body", "article"]
@@ -192,14 +206,23 @@
   },
 
   "domain_shortcuts": {
-    "bbc": {"domain": "bbc.co.uk", "rss": "feeds.bbci.co.uk/news/rss.xml"},
+    "bbc": {"domain": "bbc.co.uk", "rss": "feeds.bbci.co.uk/news/rss.xml", "note": "RSS摘要~330字；feed_enrich可行；selector=[data-component=\"text-block\"]"},
     "reuters": {"domain": "reuters.com", "rss": null, "note": "DataDome 封锁，建议用 RSS 第三方"},
     "nytimes": {"domain": "nytimes.com", "rss": "rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"},
-    "guardian": {"domain": "theguardian.com", "rss": "theguardian.com/world/rss"},
+    "guardian": {"domain": "theguardian.com", "rss": "theguardian.com/world/rss", "note": "RSS摘要~650-780字；feed_enrich可行(5/5)；selector=<article>标签；无paywall"},
     "wsj": {"domain": "wsj.com", "rss": null, "note": "DataDome + OAuth2 ROPC，需付费凭据"},
     "ft": {"domain": "ft.com", "rss": null, "note": "硬付费墙"},
-    "bloomberg": {"domain": "bloomberg.com", "rss": null, "note": "JS 渲染 + 付费墙"},
+    "bloomberg": {"domain": "bloomberg.com", "rss": "feeds.bloomberg.com/markets/news.rss", "note": "content_level=summary；RSS摘要~240字(30项)；文章页Cloudflare 403；feed_enrich不可行；已迁移RSS(summary)"},
     "twitter": {"domain": "twitter.com", "rss": null, "syndication": "syndication.twitter.com/srv/timeline-profile/screen-name/{screen_name}", "note": "官方API需开发者认证；Syndication端点免费可达"},
-    "truthsocial": {"domain": "truthsocial.com", "rss": "www.trumpstruth.org/feed", "note": "官方Mastodon API被Cloudflare封锁；第三方RSS镜像trumpstruth.org"}
+    "truthsocial": {"domain": "truthsocial.com", "rss": "www.trumpstruth.org/feed", "note": "官方Mastodon API被Cloudflare封锁；第三方RSS镜像trumpstruth.org"},
+    "cnbc": {"domain": "cnbc.com", "rss": "search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", "note": "RSS摘要~100字；feed_enrich可行；JSON-LD articleBody实为CSS类名(App-articleBody)非正文"},
+    "yonhap": {"domain": "en.yna.co.kr", "rss": "en.yna.co.kr/RSS/news.xml", "note": "RSS全文content:encoded含完整文章；40项"},
+    "kyodonews": {"domain": "english.kyodonews.net", "rss": "english.kyodonews.net/list/feed/rss4kyodonews-fzone", "note": "RSS摘要~200字截断；feed_enrich可行(5/5)；selector=<article>标签"},
+    "bangkokpost": {"domain": "bangkokpost.com", "rss": "bangkokpost.com/rss/data/topstories.xml", "note": "RSS摘要~285字截断；feed_enrich可行(5/5)；selector=readability"},
+    "koreaherald": {"domain": "koreaherald.com", "rss": "koreaherald.com/rss/newsAll", "note": "RSS摘要~500字截断；feed_enrich可行(5/5)；selector=<article>标签；premium标记但正文SSR可提取"},
+    "jerusalempost": {"domain": "jpost.com", "rss": "jpost.com/rss/rssfeedsfrontpage.aspx", "note": "RSS摘要~520-829字；feed_enrich可行(5/5)；selector=.article-paragraph-wrap；ASP.NET"},
+    "antaranews": {"domain": "en.antaranews.com", "rss": "en.antaranews.com/rss/news.xml", "note": "RSS摘要~230-257字截断；feed_enrich可行(5/5)；selector=.post-content(div直接文本)；需-L跟随301"},
+    "japantimes": {"domain": "japantimes.co.jp", "rss": "japantimes.co.jp/feed", "note": "RSS摘要~150字；Piano付费墙封锁正文；feed_enrich不可行"},
+    "ansa": {"domain": "ansa.it", "rss": null, "note": "英文版无RSS(全404)；意大利语版RSS(ansait_rss.xml)desc仅28-64字；Web正文Piano paywall(€16.99/年)"}
   }
 }
