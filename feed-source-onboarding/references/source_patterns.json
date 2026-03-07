@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "version": "1.2",
-    "last_updated": "2026-03-01",
-    "description": "Feed 数据源模式注册表 — 从 346 个已测试源中提炼的 URL/CMS/反爬模式",
+    "version": "1.3",
+    "last_updated": "2026-03-05",
+    "description": "Feed 数据源模式注册表 — 从 350+ 个已测试源中提炼的 URL/CMS/反爬模式",
     "update_rule": "每次成功接入新源后由 Phase 5 自更新指令触发追加"
   },
 
@@ -159,6 +159,34 @@
       "proxy": false,
       "bypass_rate": "none",
       "note": "软付费墙（JS overlay），RSS摘要可达但正文被截断；已知用户：Japan Times、ANSA；无法绕过需付费"
+    },
+    "HTTP2_Protocol_Block": {
+      "level": "L4",
+      "method": "none",
+      "proxy": false,
+      "bypass_rate": "none",
+      "note": "HTTP/2协议级封锁（ERR_HTTP2_PROTOCOL_ERROR）；Playwright亦失败；已知用户：CME Group、BusinessWire；无法绕过"
+    },
+    "Session_Dependent_API": {
+      "level": "L3",
+      "method": "playwright",
+      "proxy": false,
+      "bypass_rate": "medium",
+      "note": "Angular/React SPA内部API可被Playwright拦截(page.on response)但curl直接调用返回404；需浏览器会话cookie；已知用户：NFRA(nfra.gov.cn)"
+    },
+    "Kong_WAF": {
+      "level": "L3",
+      "method": "playwright",
+      "proxy": true,
+      "bypass_rate": "low",
+      "note": "Kong网关WAF；Chrome UA可绕过简单检测(如MIIT主站)；深层页面仍可能封锁"
+    },
+    "SSL_Cert_Invalid": {
+      "level": "L4",
+      "method": "none",
+      "proxy": false,
+      "bypass_rate": "none",
+      "note": "ERR_CERT_AUTHORITY_INVALID；服务器SSL证书无效或过期；已知用户：海关总署(customs.gov.cn)；需等待站点修复"
     }
   },
 
@@ -223,6 +251,37 @@
     "jerusalempost": {"domain": "jpost.com", "rss": "jpost.com/rss/rssfeedsfrontpage.aspx", "note": "RSS摘要~520-829字；feed_enrich可行(5/5)；selector=.article-paragraph-wrap；ASP.NET"},
     "antaranews": {"domain": "en.antaranews.com", "rss": "en.antaranews.com/rss/news.xml", "note": "RSS摘要~230-257字截断；feed_enrich可行(5/5)；selector=.post-content(div直接文本)；需-L跟随301"},
     "japantimes": {"domain": "japantimes.co.jp", "rss": "japantimes.co.jp/feed", "note": "RSS摘要~150字；Piano付费墙封锁正文；feed_enrich不可行"},
-    "ansa": {"domain": "ansa.it", "rss": null, "note": "英文版无RSS(全404)；意大利语版RSS(ansait_rss.xml)desc仅28-64字；Web正文Piano paywall(€16.99/年)"}
+    "ansa": {"domain": "ansa.it", "rss": null, "note": "英文版无RSS(全404)；意大利语版RSS(ansait_rss.xml)desc仅28-64字；Web正文Piano paywall(€16.99/年)"},
+    "hkex": {"domain": "hkexnews.hk", "rss": null, "note": "POST搜索API(titlesearch.xhtml)返回HTML表格无需JS；参数lang=EN&category=0&market=SEHK；scope=subscription(per stock_code)"},
+    "asic": {"domain": "asic.gov.au", "rss": null, "note": "列表页Vue SPA需Playwright；详情页SSR可达(requests)；crawl_method混合(playwright列表+requests详情)"},
+    "cme": {"domain": "cmegroup.com", "rss": null, "note": "ERR_HTTP2_PROTOCOL_ERROR(Playwright亦失败)；HTTP/2协议级封锁无法绕过"},
+    "businesswire": {"domain": "businesswire.com", "rss": null, "note": "RSS所有代码均deactivated；www ERR_HTTP2_PROTOCOL_ERROR"},
+    "nfra": {"domain": "nfra.gov.cn", "rss": null, "note": "原cbirc.gov.cn已DNS失效；Angular SPA Playwright可拦截JSON API但curl 404(需session)"},
+    "dart": {"domain": "dart.fss.or.kr", "rss": null, "note": "Web viewer仅211字符；OpenDART API(opendart.fss.or.kr)需免费注册获取api_key"}
+  },
+
+  "spa_hybrid_patterns": {
+    "_description": "SPA列表页+SSR详情页混合模式：列表需Playwright但详情页可用requests直接抓取",
+    "vue_list_ssr_detail": {
+      "discovery": "列表页返回空壳HTML(<div id=app>)，但详情页URL返回完整SSR HTML",
+      "crawl_method": "playwright(列表) + requests(详情)",
+      "crawl_mode": "list_detail",
+      "verified_sources": ["ASIC (asic.gov.au)"],
+      "note": "先用Playwright渲染列表页提取文章链接，再用requests抓取每篇详情页正文"
+    },
+    "post_search_api": {
+      "discovery": "表单POST提交返回结构化HTML/JSON，绕过前端SPA直接获取数据",
+      "crawl_method": "requests(POST)",
+      "crawl_mode": "list_detail",
+      "verified_sources": ["HKEX (hkexnews.hk)"],
+      "note": "检查<form>标签的action URL+参数，直接POST获取数据无需JS渲染"
+    },
+    "playwright_api_intercept": {
+      "discovery": "Playwright渲染页面时page.on('response')拦截到JSON API调用",
+      "crawl_method": "playwright(需session)",
+      "limitation": "拦截到的API URL无法用curl直接调用(返回403/404)，需浏览器会话cookie",
+      "verified_sources": ["NFRA (nfra.gov.cn)"],
+      "note": "可用于发现隐藏API端点结构，但采集仍需维持Playwright session"
+    }
   }
 }
